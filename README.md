@@ -4,7 +4,7 @@
 
 ## English
 
-PngTile2Dem is a QGIS plugin that downloads numeric elevation WebP tiles provided by the National Land Information Division (GSI Japan, through nationwide Q-Chizu), decodes RGB values into real elevation values, mosaics the tiles, and exports a DEM GeoTIFF in any CRS.
+PngTile2Dem is a QGIS plugin that downloads numeric elevation WebP tiles provided by the National Land Information Division (GSI Japan, through Zenkoku Q Chizu), decodes RGB values into real elevation values, mosaics the tiles, and exports a DEM GeoTIFF in any CRS.
 
 This plugin is optimized for:
 - Fast parallel tile downloads
@@ -26,7 +26,20 @@ This plugin is optimized for:
 - ✔ Estimated processing time before execution
 
 Tile Source:  
+Zenkoku Q Chizu
 https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp
+
+DEM5A
+https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png
+
+DEM5B
+https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{z}/{x}/{y}.png
+
+DEM5C
+https://cyberjapandata.gsi.go.jp/xyz/dem5c_png/{z}/{x}/{y}.png
+
+DEM10B
+https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png
 
 ---
 
