@@ -230,7 +230,7 @@ MIT ライセンスで公開しています。
 指定した範囲の一部で全国Q地図タイルが存在しない場合には地理院タイル DEM5AやDEM5B、DEM5C、DEM10Bで補完されます。
 
 本プラグインおよび生成される DEM は、
-**国土地理院コンテンツ利用規約**（https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html）および**Q地図タイルの利用方法**（https://info.qchizu.xyz/qchizu/reprint/）に基づいて利用可能です。
+**国土地理院コンテンツ利用規約**（ https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html ） および **Q地図タイルの利用方法** （ https://info.qchizu.xyz/qchizu/reprint/ ） に基づいて利用可能です。
 
 
 タイル提供元：  
