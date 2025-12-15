@@ -1,0 +1,20 @@
+[general]
+name=PngTile2Dem
+qgisMinimumVersion=3.22
+description=Generate DEM GeoTIFF from numeric WebP elevation tiles
+version=1.0.0
+author=Y. Iwasa
+email=yiwasa0607@gmail.com
+
+about=PngTile2Dem: Convert Japan GSI numeric WebP DEM tiles (https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp) provided by Zenkoku Q Chizu to GeoTIFF. / 全国Q地図が提供する数値標高WebPタイル（https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp）をGeoTIFFに変換するQGISプラグイン
+
+repository=https://github.com/yiwasa/png_tile_2_dem
+
+tags=DEM, elevation, WEBP, raster, terrain, Japan, GSI
+
+category=Raster
+icon=icon.png
+
+experimental=False
+deprecated=False
+server=False

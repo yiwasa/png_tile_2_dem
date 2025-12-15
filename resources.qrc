@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/png_tile_2_dem" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
