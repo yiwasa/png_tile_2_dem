@@ -116,7 +116,20 @@ PngTile2Dem は、全国Q地図から提供されている **数値標高 WebP �
 - ✔ マルチスレッド高速処理  
 
 タイル提供元：  
+全国Q地図タイル
 https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp
+
+DEM5A
+https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png
+
+DEM5B
+https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{z}/{x}/{y}.png
+
+DEM5C
+https://cyberjapandata.gsi.go.jp/xyz/dem5c_png/{z}/{x}/{y}.png
+
+DEM10B
+https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png
 
 ---
 
