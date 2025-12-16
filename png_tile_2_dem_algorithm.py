@@ -12,6 +12,8 @@ import requests
 import numpy as np
 from PIL import Image
 from io import BytesIO
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from qgis.core import (
     QgsProcessing,
@@ -27,6 +29,8 @@ from qgis.core import (
 )
 
 from osgeo import gdal, osr
+gdal.SetConfigOption("GDAL_NUM_THREADS", "1")
+gdal.UseExceptions()
 
 from threading import Lock
 progress_lock = Lock()
@@ -82,14 +86,9 @@ def rgb_to_height_from_array(arr):
     return h
 
 def process_single_tile(args):
-    """
-    Robust single-tile processing with deterministic fallback:
-      - args: (x, y, Z, tmpdir, nodata, session)
-      - try candidates in order; treat non-200, empty body, unreadable images,
-        or "mostly-NA" tiles as missing and continue to next candidate.
-      - write a .src file recording the chosen URL when a tile is produced.
-    """
-    x, y, Z, tmpdir, nodata, session = args
+    x, y, Z, tmpdir, nodata = args
+    session = requests.Session()
+    session.headers.update({"User-Agent": "png_tile_2_dem/1.0"})
 
     # -----------------------------
     # Q地図は Z=17 を使用（そのまま x,y を使う）
@@ -235,6 +234,11 @@ def process_single_tile(args):
         except Exception:
             # non-fatal if writing .src fails
             pass
+        
+        try:
+            session.close()
+        except Exception:
+            pass
 
         return out, True
 
@@ -330,7 +334,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             session.headers.update({"User-Agent": "png_tile_2_dem/1.0"})
             for x in range(tx0, tx1 + 1):
                 for y in range(ty0, ty1 + 1):
-                    tasks.append((x, y, Z, tmpdir, nodata, session))
+                    tasks.append((x, y, Z, tmpdir, nodata))
 
             # 並列処理（CPU コア数の 2 倍くらいが高速）
             max_workers = min(16, os.cpu_count() * 2)
