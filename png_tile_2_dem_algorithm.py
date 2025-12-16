@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 PngTile2DemAlgorithm
@@ -124,192 +125,86 @@ def process_single_tile(args):
         f"https://cyberjapandata.gsi.go.jp/xyz/dem_png/{Z_GSI_10M}/{x_10m}/{y_10m}.png",
     ]
 
-    # thresholds
-    VALID_FRACTION_THRESHOLD = 0.001   # 有効ピクセル割合がこれ未満なら実用タイルとはみなさない（非常に小さく）
-    NA_PIXELS_RATIO_FOR_QMAP = 0.95    # Q地図特有の「ほぼ全てNA色」を検出する閾値
+    # ================================
+    # 1) ベース：dem10B を必ず取得
+    # ================================
+    h_base = None
+    try:
+        url_10b = f"https://cyberjapandata.gsi.go.jp/xyz/dem_png/{Z_GSI_10M}/{x_10m}/{y_10m}.png"
+        r = session.get(url_10b, timeout=12)
+        if r.status_code == 200:
+            img = Image.open(BytesIO(r.content)).convert("RGBA")
+            arr = np.asarray(img)
+            h0 = rgb_to_height_from_array(arr[:, :, :3])
 
-    used_url = None
-    used_z_src = None
-    h = None
+            scale = 2 ** (Z - Z_GSI_10M)  # 17-14=3 → 8
+            img_f = Image.fromarray(np.where(np.isnan(h0), nodata, h0).astype(np.float32), mode="F")
+            img_big = img_f.resize((256 * scale, 256 * scale), Image.BILINEAR)
+            h_big = np.array(img_big, dtype=np.float32)
 
-    for url in candidates:
-        # 1) quick existence check via HEAD
-        # ※ dem10b (dem_png) は HEAD が不安定なのでスキップする
-        if "dem_png" not in url:
-            try:
-                head = session.head(url, timeout=5, allow_redirects=True)
-                head.close()
-                if head.status_code != 200:
-                    continue
-                cl = head.headers.get("Content-Length")
-                if cl is not None:
-                    try:
-                        if int(cl) < 100:
-                            continue
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            chunk_x = x - (x_10m << (Z - Z_GSI_10M))
+            chunk_y = y - (y_10m << (Z - Z_GSI_10M))
+            xs = 256 * chunk_x
+            ys = 256 * chunk_y
 
-        # 2) GET the tile
-        try:
-            resp = session.get(url, timeout=20, stream=False)
-        except Exception:
-            continue
+            h_base = h_big[ys:ys+256, xs:xs+256]
 
-        if resp.status_code != 200:
-            continue
-        if not resp.content or len(resp.content) < 50:
-            # empty or extremely small body
-            continue
+    except Exception:
+        pass
 
-        # 3) try to decode as image
-        try:
-            img_tmp = Image.open(BytesIO(resp.content)).convert("RGBA")
-            arr_tmp = np.asarray(img_tmp)
-            # ensure shape and channels
-            if arr_tmp.ndim != 3 or arr_tmp.shape[2] < 3:
-                continue
-        except Exception:
-            # unreadable image (corrupt webp/png/etc.)
-            continue
-
-        # 4) compute height array and basic validity metrics
-        try:
-            h_tmp = rgb_to_height_from_array(arr_tmp[:, :, :3])
-        except Exception:
-            continue
-
-        total_count = h_tmp.size
-        if total_count == 0:
-            continue
-
-        valid_count = int(np.count_nonzero(~np.isnan(h_tmp)))
-        valid_fraction = valid_count / float(total_count)
-
-        # ★ 追加：有効ピクセルがほぼ無い dem5* は「無いもの」として扱う ★
-        if "dem5" in url and valid_fraction < VALID_FRACTION_THRESHOLD:
-            continue
-
-        # 5) special check for Q地図: many Q地図 "欠損" は NA 色や透明で満たされている
-        if url.startswith("https://mapdata.qchizu.xyz"):
-            # check NA color (R=128,G=0,B=0) ratio
-            try:
-                na_mask_rgb = (arr_tmp[:, :, 0] == 128) & (arr_tmp[:, :, 1] == 0) & (arr_tmp[:, :, 2] == 0)
-                na_ratio_rgb = float(np.count_nonzero(na_mask_rgb)) / float(total_count)
-            except Exception:
-                na_ratio_rgb = 0.0
-
-            # also check alpha-transparent ratio
-            try:
-                alpha_chan = arr_tmp[:, :, 3]
-                alpha_zero_ratio = float(np.count_nonzero(alpha_chan == 0)) / float(total_count)
-            except Exception:
-                alpha_zero_ratio = 0.0
-
-            # if either RGB-NA or alpha-transparent dominates, treat as missing
-            if na_ratio_rgb > NA_PIXELS_RATIO_FOR_QMAP or alpha_zero_ratio > NA_PIXELS_RATIO_FOR_QMAP:
-                # skip to next candidate (this Q地図 tile is effectively "missing")
-                continue
-
-        # 7) if we are here, adopt this tile
-        used_url = url
-
-        if "mapdata.qchizu.xyz" in url:
-            used_z_src = Z_QMAP
-        elif "dem5" in url:
-            used_z_src = Z_GSI_5M
-        elif "dem_png" in url:
-            used_z_src = Z_GSI_10M
-
-        h = h_tmp
-        break
-    
-    # h が壊れた型になっている場合に備えて強制初期化
-    if h is not None and not isinstance(h, np.ndarray):
-        h = None
-
-
-    if used_z_src is None:
-        used_z_src = Z  # 念のため（等倍）
-
-    scale = 2 ** (Z - used_z_src)
-
-    # ---- 最終保険：ここまで来て h が None なら dem10B を強制使用 ----
-    if h is None:
-        try:
-            url = f"https://cyberjapandata.gsi.go.jp/xyz/dem_png/{Z_GSI_10M}/{x_10m}/{y_10m}.png"
-            r = session.get(url, timeout=12)
-            if r.status_code == 200:
-                img = Image.open(BytesIO(r.content)).convert("RGBA")
-                arr = np.asarray(img)
-                h_tmp = rgb_to_height_from_array(arr[:, :, :3])
-
-                # ★ ここを追加 ★
-                if np.count_nonzero(~np.isnan(h_tmp)) > 0:
-                    h = h_tmp
-                    used_url = url
-                    used_z_src = Z_GSI_10M
-        except Exception:
-            pass
-
-    if h is None:
+    if h_base is None:
         return None, False
     
-    # =====================================================
-    # ★ 最終的な拡大・切り出し（ここで1回だけ） ★
-    # =====================================================
+    # ================================
+    # 2) 上位 DEM でピクセル単位に上書き
+    # ================================
+    overlay_urls = [
+        f"https://cyberjapandata.gsi.go.jp/xyz/dem5c_png/{Z_GSI_5M}/{x_5m}/{y_5m}.png",
+        f"https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{Z_GSI_5M}/{x_5m}/{y_5m}.png",
+        f"https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{Z_GSI_5M}/{x_5m}/{y_5m}.png",
+        f"https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{Z_QMAP}/{x}/{y}.webp",
+    ]
 
-    # 使用 DEM のズーム
-    if "mapdata.qchizu.xyz" in used_url:
-        z_src = Z
-    elif "dem5" in used_url:
-        z_src = Z_GSI_5M
-    elif "dem_png" in used_url:
-        z_src = Z_GSI_10M
-    else:
-        z_src = Z
+    for url in overlay_urls:
+        try:
+            r = session.get(url, timeout=12)
+            if r.status_code != 200:
+                continue
 
-    shift = Z - z_src
-    scale = 2 ** shift
+            img = Image.open(BytesIO(r.content)).convert("RGBA")
+            arr = np.asarray(img)
+            h0 = rgb_to_height_from_array(arr[:, :, :3])
 
-    if shift > 0:
-        nan_mask = np.isnan(h)
-        h_tmp = np.where(nan_mask, nodata, h).astype(np.float32)
+            # --- Q地図（Z=17）はそのまま使う ---
+            if "mapdata.qchizu.xyz" in url:
+                h_overlay = h0
 
-        img_f = Image.fromarray(h_tmp, mode="F")
-        img_big = img_f.resize((256 * scale, 256 * scale), Image.BILINEAR)
-        h_big = np.array(img_big, dtype=np.float32)
+            # --- dem5 系（Z=15）は Z17 に拡大して切り出す ---
+            else:
+                scale = 2 ** (Z - Z_GSI_5M)  # 4
+                img_f = Image.fromarray(np.where(np.isnan(h0), nodata, h0).astype(np.float32), mode="F")
+                img_big = img_f.resize((256 * scale, 256 * scale), Image.BILINEAR)
+                h_big = np.array(img_big, dtype=np.float32)
 
-        mask_img = Image.fromarray((nan_mask.astype(np.uint8) * 255), mode="L")
-        mask_big = mask_img.resize((256 * scale, 256 * scale), Image.NEAREST)
-        mask_big = np.array(mask_big) > 127
-        h_big[mask_big] = np.nan
+                chunk_x = x - (x_5m << (Z - Z_GSI_5M))
+                chunk_y = y - (y_5m << (Z - Z_GSI_5M))
+                xs = 256 * chunk_x
+                ys = 256 * chunk_y
 
-        # --- ★ 正しい切り出し位置（元タイル基準）★ ---
-        if z_src == Z_GSI_10M:
-            chunk_x = (x - (x_10m << shift)) 
-            chunk_y = (y - (y_10m << shift))
-        elif z_src == Z_GSI_5M:
-            chunk_x = (x - (x_5m << shift))
-            chunk_y = (y - (y_5m << shift))
-        else:
-            chunk_x = x % scale
-            chunk_y = y % scale
-        if not (0 <= chunk_x < scale and 0 <= chunk_y < scale):
-            return None, False
-        xs = 256 * chunk_x
-        ys = 256 * chunk_y
+                h_overlay = h_big[ys:ys+256, xs:xs+256]
 
-        h = h_big[ys:ys+256, xs:xs+256]
-    
+            # ★ Q地図・dem5 共通の上書き処理 ★
+            mask = (~np.isnan(h_overlay)) & (h_overlay > -100)
+            h_base[mask] = h_overlay[mask]
+
+        except Exception:
+            continue
+
+    h = h_base
+    used_url = "COMPOSITE"    
 
     # nodata 最終処理
     h = np.where(np.isnan(h), nodata, h).astype(np.float32)
-
-    # ★ 最終 Z=17 タイルとしての有効性チェック（dem10b含む）★
-    if np.count_nonzero(h != nodata) == 0:
-        return None, False
 
     # prepare final array (fill NaN -> nodata)
     h_filled = np.where(np.isnan(h), nodata, h).astype(np.float32)
