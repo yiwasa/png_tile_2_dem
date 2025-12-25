@@ -2,13 +2,13 @@
 name=PngTile2Dem
 qgisMinimumVersion=3.22
 description=Generate DEM GeoTIFF from numeric WebP elevation tiles
-version=1.0.1
+version=1.1.0
 author=Y. Iwasa
 email=yiwasa0607@gmail.com
 homepage=https://github.com/yiwasa/png_tile_2_dem
 tracker=https://github.com/yiwasa/png_tile_2_dem
 
-about=PngTile2Dem: Convert Japan GSI numeric WebP DEM tiles (https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp) provided by Zenkoku Q Chizu to GeoTIFF. / 全国Q地図が提供する数値標高WebPタイル（https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp）をGeoTIFFに変換するQGISプラグイン
+about=PngTile2Dem: A powerful tool to create DEM GeoTIFFs by integrating various elevation tile sources across Japan. Supports GSI (Geospatial Information Authority), GSJ (AIST), Forestry Agency, and Zenkoku Q Chizu. Features parallel downloads, multi-source compositing, and any CRS output. / 全国Q地図、国土地理院、産総研、林野庁などが公開している各種数値標高タイルを統合し、任意の座標系でGeoTIFFを出力するプラグインです。並列処理による高速ダウンロードと、高精度な補完処理が特徴です。
 
 repository=https://github.com/yiwasa/png_tile_2_dem
 
