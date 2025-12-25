@@ -5,6 +5,7 @@
 # 日本語 — Japanese
 
 PngTile2Dem は、日本国内の様々な機関（国土地理院、産総研、林野庁、全国Q地図など）から提供されている **数値標高タイル** を取得し、それらを統合・補完して高品質な **GeoTIFF（DEM）** を生成する QGIS プラグインです。
+
 ---
 
 ## 主な機能
@@ -136,9 +137,6 @@ https://forestgeo.info/opendata/38_ehime/dem_2019/{z}/{x}/{y}.png
 2018年度高知県0.5mメッシュ【産総研】	
 https://tiles.gsj.jp/tiles/elev/kochi/{z}/{y}/{x}.png
 
-2022年長崎県0.5mメッシュ【林野庁】	
-https://forestgeo.info/opendata/42_nagasaki/dem_2022/{z}/{x}/{y}.png
-
 DEM5A
 https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png
 
@@ -182,42 +180,18 @@ https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png
 
 ## English
 
-PngTile2Dem is a QGIS plugin that downloads numeric elevation WebP tiles provided by the National Land Information Division (GSI Japan, through Zenkoku Q Chizu), decodes RGB values into real elevation values, mosaics the tiles, and exports a DEM GeoTIFF in any CRS.
-
-This plugin is optimized for:
-- Fast parallel tile downloads
-- Accurate RGB → elevation decoding
-- Efficient VRT-based mosaicking
-- Reliable GeoTIFF output with overviews for smooth display
-- Output CRS selection (EPSG:4326, EPSG:3857, Japan Plane Rectangular CS 1–19, etc.)
+PngTile2Dem is a QGIS plugin designed to acquire Digital Elevation Model (DEM) tiles provided by various Japanese organizations (Geospatial Information Authority of Japan (GSI), AIST, Forestry Agency, Zenkoku Q Chizu, etc.). It integrates and interpolates these sources to generate high-quality GeoTIFF (DEM) files.
 
 ---
 
-## Features
+## Key Features
+- ✔ Multi-Source Integration: Supports the latest LiDAR results, including Zenkoku Q Map, AIST (0.5m/0.25m mesh), and Forestry Agency (0.5m mesh).
 
-- ✔ Download WebP numeric DEM tiles (Zoom level 17)
-- ✔ Decode RGB-coded elevation values
-- ✔ Mosaic tiles using GDAL VRT
-- ✔ Reproject to any CRS
-- ✔ GeoTIFF output with tiling, compression, overviews
-- ✔ Multithreaded processing
-- ✔ Estimated processing time before execution
+- ✔ Intelligent Synthesis: Automatically fills data gaps using Q Map or GSI 10m mesh if the primary source is unavailable for a specific area.
 
-Tile Source:  
-Zenkoku Q Chizu
-https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp
+- ✔ Custom Coordinate System Output: Save directly in the optimal CRS for your analysis, such as the Japanese Plane Rectangular Coordinate System (JGD2011).
 
-DEM5A
-https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png
-
-DEM5B
-https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{z}/{x}/{y}.png
-
-DEM5C
-https://cyberjapandata.gsi.go.jp/xyz/dem5c_png/{z}/{x}/{y}.png
-
-DEM10B
-https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png
+- ✔ High-Speed Processing: Parallel downloads utilizing multi-threading.
 
 ---
 
@@ -232,17 +206,18 @@ https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png
 
 ## Usage
 
-1. Define an extraction extent in the map canvas.
-2. Select output CRS.
-3. Choose output GeoTIFF file.
-4. Run the tool.
+1. Launch **PngTile2Dem (Multi-Source Integrated)** from the QGIS Toolbox.
+2. **Extraction extent**: Specify the target area on the map canvas.
+3. **Primary DEM source**: Select the data source you want to prioritize.
+4. **Output CRS**: Choose the coordinate system for your analysis (e.g., EPSG:6677).
+5. Run the process. The plugin will download, merge, and add the resulting GeoTIFF to your project.
 
-The plugin will:
-- Download necessary tiles
-- Build a VRT
-- Warp to the final CRS
-- Save DEM GeoTIFF
-- Add the layer automatically
+The plugin automates the following steps:
+- Downloading required tiles
+- Creating a VRT (Virtual Raster)
+- Warping to the final CRS
+- Generating the GeoTIFF
+- Automatically adding the layer to QGIS
 
 ---
 
@@ -266,7 +241,7 @@ The plugin will:
 
 ## Notes
 
-- Recommended maximum area: ≤ ~20,000 tiles  
+- Recommended maximum area: ≤ ~30,000 tiles  
   (QGIS / GDAL performance may degrade beyond this)
 
 ---
@@ -280,15 +255,64 @@ See `LICENSE` for details.
 
 ## Data Sources and Usage Conditions
 
-This plugin generates a derivative DEM by acquiring, decrypting, resampling, and mosaicking tiles based on the following elevation data published as Q Chizu tiles by the Zenkoku Q Chizu.
-This data is provided under usage approval granted by the Geospatial Information Authority of Japan (GSI) based on the Surveying and Mapping Act.
-If Q Chizu tiles are unavailable for part of the specified area, they are supplemented with GSI tiles such as DEM5A, DEM5B, DEM5C, or DEM10B.
+This plugin generates derivative DEMs by retrieving, decoding, resampling, and mosaicing elevation data published by AIST, the Forestry Agency, and local governments. This is done based on the approval of the Geospatial Information Authority of Japan (GSI) obtained by "Zen-koku Q Chizu" (QMap) under the Survey Act. If tiles are missing in parts of the specified area, they are supplemented with GSI Tiles (DEM5A, DEM5B, DEM5C, or DEM10B).
 
-This plugin and the generated DEM are available for use under the **Geospatial Information Authority of Japan Content Usage Terms** (https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html) and the **Q Chizu Tile Usage Guidelines** (https://info.qchizu.xyz/qchizu/reprint/).
+This plugin and the generated DEMs can be used in accordance with the **GSI Content Terms of Use** (https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html) and the **QMap Tile Usage Policy** (https://info.qchizu.xyz/qchizu/reprint/).
 
 Tile Provider:  
 Q Chizu Tiles  
 https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp
+
+Miyagi Prefecture 0.5m Mesh 【Forestry Agency】	
+https://forestgeo.info/opendata/4_miyagi/dem_2023/{z}/{x}/{y}.png
+
+2021-2022 Tochigi Prefecture 0.5m Mesh 【AIST】	
+https://tiles.gsj.jp/tiles/elev/tochigi/{z}/{y}/{x}.png
+
+FY2022-2023 Tokyo 0.25m Mesh 【AIST】
+https://tiles.gsj.jp/tiles/elev/tokyo/{z}/{y}/{x}.png
+
+FY2019-2022 Kanagawa Prefecture 0.5m Mesh 【AIST】
+https://tiles.gsj.jp/tiles/elev/kanagawa/{z}/{y}/{x}.png
+
+2021 Toyama Prefecture 0.5m Mesh 【Forestry Agency】
+https://forestgeo.info/opendata/16_toyama/dem_2021/{z}/{x}/{y}.png
+
+2024 Ishikawa Prefecture Noto 0.5m Mesh 【Q Chizu】
+https://mapdata.qchizu2.xyz/03_dem/59_rinya/noto_2024/0pt5_01/{z}/{x}/{y}.png
+
+FY2020 Ishikawa Prefecture Noto Western 0.5m Mesh 【Q Chizu】
+https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_02_g/{z}/{x}/{y}.png
+
+FY2022 Ishikawa Prefecture Noto Eastern 0.5m Mesh 【Q Chizu】	
+https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_01_g/{z}/{x}/{y}.png
+
+2024 Yamanashi Prefecture 0.5m Mesh 【Forestry Agency】
+https://forestgeo.info/opendata/19_yamanashi/dem_2024/{z}/{x}/{y}.png
+
+Shizuoka Prefecture 0.5m Mesh 【AIST】
+https://tiles.gsj.jp/tiles/elev/shizuoka/{z}/{y}/{x}.png
+
+Shiga Prefecture 0.5m Mesh 【Forestry Agency】	
+https://forestgeo.info/opendata/25_shiga/dem_2023/{z}/{x}/{y}.png
+
+2019-2023 Kyoto Prefecture 0.5m Mesh 【Forestry Agency】	
+https://forestgeo.info/opendata/26_kyoto/dem_2024/{z}/{x}/{y}.png
+
+FY2021-2022 Hyogo Prefecture 0.5m Mesh 【AIST】	
+https://tiles.gsj.jp/tiles/elev/hyogodem/{z}/{y}/{x}.png
+
+FY2018-2023 Tottori Prefecture 0.5m Mesh 【Tottori Prefecture】
+https://rinya-tottori.geospatial.jp/tile/rinya/2024/gridPNG_tottori/{z}/{x}/{y}.png
+
+Okayama Prefecture 0.5m Mesh 【Forestry Agency】	
+https://forestgeo.info/opendata/33_okayama/dem_2024/{z}/{x}/{y}.png
+
+2019 Ehime Prefecture 0.5m Mesh 【Forestry Agency】	
+https://forestgeo.info/opendata/38_ehime/dem_2019/{z}/{x}/{y}.png
+
+FY2018 Kochi Prefecture 0.5m Mesh 【AIST】	
+https://tiles.gsj.jp/tiles/elev/kochi/{z}/{y}/{x}.png
 
 DEM5A
 https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png
