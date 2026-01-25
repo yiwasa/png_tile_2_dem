@@ -2,7 +2,7 @@
 name=PngTile2Dem
 qgisMinimumVersion=3.22
 description=Generate DEM GeoTIFF from numeric WebP elevation tiles
-version=1.1.0
+version=1.1.1
 author=Y. Iwasa
 email=yiwasa0607@gmail.com
 homepage=https://github.com/yiwasa/png_tile_2_dem
