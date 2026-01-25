@@ -306,7 +306,11 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         except:
             return True, ""
 
-        BASE_Z = 17
+        # ★修正: 選択されたソースに合わせて見積もり計算用のズームレベルを取得
+        primary_idx = self.parameterAsEnum(parameters, self.PRIMARY_DEM, context)
+        display_sources = [s for s in self.TILE_SOURCES if not s["key"].startswith("fallback_")]
+        BASE_Z = display_sources[primary_idx]["zoom"]
+
         tx0, ty_max = lonlat_to_tile(p_min.x(), p_max.y(), BASE_Z)
         tx1, ty_min = lonlat_to_tile(p_max.x(), p_min.y(), BASE_Z)
         tx_start, tx_end = min(tx0, tx1), max(tx0, tx1)
@@ -336,7 +340,8 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         output_crs = self.parameterAsCrs(parameters, self.OUTPUT_CRS, context)
 
         display_sources = [s for s in self.TILE_SOURCES if not s["key"].startswith("fallback_")]
-        primary_key = display_sources[primary_idx]["key"]
+        primary_source = display_sources[primary_idx]     
+        primary_key = primary_source["key"]          
 
         # 範囲変換
         epsg4326 = QgsCoordinateReferenceSystem("EPSG:4326")
@@ -344,7 +349,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         p_min = xform.transform(extent.xMinimum(), extent.yMinimum())
         p_max = xform.transform(extent.xMaximum(), extent.yMaximum())
 
-        BASE_Z = 17
+        BASE_Z = primary_source["zoom"]            
         tx0, ty_max = lonlat_to_tile(p_min.x(), p_max.y(), BASE_Z)
         tx1, ty_min = lonlat_to_tile(p_max.x(), p_min.y(), BASE_Z)
         tx_start, tx_end = min(tx0, tx1), max(tx0, tx1)
@@ -382,7 +387,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
                 for y in range(ty_start, ty_end + 1):
                     tasks.append((x, y, BASE_Z, primary_key, self.TILE_SOURCES, tmpdir, nodata))
 
-            max_workers = min(16, os.cpu_count() * 2)
+            max_workers = min(16, (os.cpu_count() or 4) * 2)
             temp_files = []
             completed = 0
             
@@ -402,11 +407,17 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             vrt_path = os.path.join(tmpdir, "mosaic.vrt")
             gdal.BuildVRT(vrt_path, temp_files)
 
+            # ★追加: 指定範囲に合わせて正確に切り取るための計算
+            out_xform = QgsCoordinateTransform(context.project().crs(), output_crs, QgsProject.instance())
+            out_rect = out_xform.transformBoundingBox(extent)
+
             warp_opts = gdal.WarpOptions(
                 dstSRS=output_crs.authid(),
                 format="GTiff",
                 resampleAlg=gdal.GRA_Bilinear,
                 dstNodata=nodata,
+                # ★追加: 出力範囲をユーザー指定範囲(minX, minY, maxX, maxY)に固定
+                outputBounds=(out_rect.xMinimum(), out_rect.yMinimum(), out_rect.xMaximum(), out_rect.yMaximum()),
                 creationOptions=["COMPRESS=DEFLATE", "TILED=YES"]
             )
             gdal.Warp(output_tif, vrt_path, options=warp_opts)
