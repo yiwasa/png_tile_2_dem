@@ -239,6 +239,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
 
     TILE_SOURCES = [
         {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp", "xy_order": "xy"},
+        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【地理院】", "zoom": 17, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "miyagi", "name": "宮城県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/4_miyagi/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "tochigi", "name": "2021〜2022年栃木県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/tochigi/{z}/{y}/{x}.png", "xy_order": "yx"},
         {"key": "tokyo", "name": "2022〜2023年度東京都0.25mメッシュ【産総研】", "zoom": 19, "url": "https://tiles.gsj.jp/tiles/elev/tokyo/{z}/{y}/{x}.png", "xy_order": "yx"},
@@ -249,6 +250,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         {"key": "noto2022e", "name": "2022年度石川県能登東部0.5mメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_01_g/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "yamanashi", "name": "2024年山梨県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/19_yamanashi/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "shizuoka", "name": "静岡県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/shizuoka/{z}/{y}/{x}.png", "xy_order": "yx"},
+        {"key": "aichi", "name": "愛知県（尾張西三河森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_078_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
         {"key": "shiga", "name": "滋賀県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/25_shiga/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "kyoto", "name": "2019〜2023年京都府0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/26_kyoto/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "hyogo", "name": "2021〜2022年度兵庫県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/hyogodem/{z}/{y}/{x}.png", "xy_order": "yx"},
@@ -270,7 +272,8 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         # ウィンドウの右パネル（ヘルプ）に表示されるテキスト（HTML対応）
         return """
         <h2>DEM取得の手順</h2>
-        <p>DEMの取得範囲を確認するには、<b><a href="https://maps.qchizu.xyz/">全国Q地図</a></b> を開き、「4.地形」レイヤを参照してください。</p>
+        <p>DEMの整備範囲を確認するには、<b><a href="https://maps.qchizu.xyz/">全国Q地図</a></b> を開き、「4.地形」レイヤを参照してください。</p>
+        <p>「愛知県（尾張西三河森林計画区）」の整備範囲は<b><a href="https://www.geospatial.jp/ckan/dataset/owarinishimikawa_078/resource/c27000f2-7a52-4a6d-93af-227fb4d23a01">こちら</a></b> をご確認ください。</p>
         <p>範囲を選択する際は、このツールに戻り「Extraction extent」の右側の「...」ボタンから「キャンバス上で描画」などを選択してください。</p>
         """
 
