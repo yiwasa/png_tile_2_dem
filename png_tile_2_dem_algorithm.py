@@ -79,7 +79,17 @@ def decode_gsi_png(img_arr):
     height = np.empty_like(x, dtype=np.float32)
     mask_low = x < (1 << 23)
     height[mask_low] = x[mask_low] * 0.01
+    
+    # 国土地理院の標準NoData (128, 0, 0)
     height[x == (1 << 23)] = np.nan
+    # 林野庁タイル等の範囲外対策: 黒(0, 0, 0)を強制的にNoData(穴)として扱う
+    height[x == 0] = np.nan
+    
+    # 追加: アルファチャンネル（透過度）があれば、透明な部分も強制的にNoDataにする
+    if img_arr.shape[2] == 4:
+        a = img_arr[:, :, 3]
+        height[a == 0] = np.nan
+        
     mask_high = x > (1 << 23)
     height[mask_high] = (x[mask_high] - (1 << 24)) * 0.01
     return height
@@ -90,7 +100,15 @@ def decode_qmap_rgb(img_arr):
     g = img_arr[:, :, 1].astype(np.float32)
     b = img_arr[:, :, 2].astype(np.float32)
     height = (r * 256 * 256 + g * 256 + b) * 0.01
+    
     height[(r == 128) & (g == 0) & (b == 0)] = np.nan
+    height[(r == 0) & (g == 0) & (b == 0)] = np.nan
+    
+    # 追加: アルファチャンネル（透過度）があれば、透明な部分も強制的にNoDataにする
+    if img_arr.shape[2] == 4:
+        a = img_arr[:, :, 3]
+        height[a == 0] = np.nan
+        
     return height
 
 def decode_gsj_png(img_arr):
@@ -116,19 +134,38 @@ def process_single_tile_composite(args):
     composite_dem = np.full((tile_size, tile_size), np.nan, dtype=np.float32)
 
     def fetch_and_decode(src_key, x, y, z):
-        source = next(s for s in active_sources if s["key"] == src_key)
-        url = source["url"].format(z=z, x=x, y=y)
-        try:
-            r = session.get(url, timeout=10)
-            if r.status_code != 200: return None
-            img = Image.open(BytesIO(r.content))
-            img.load()
-            img_arr = np.array(img.convert("RGBA" if source["xy_order"] == "yx" else "RGB"))
+            source = next(s for s in active_sources if s["key"] == src_key)
             
-            if src_key == "qmap": return decode_qmap_rgb(img_arr)
-            elif source["xy_order"] == "yx": return decode_gsj_png(img_arr)
-            else: return decode_gsi_png(img_arr)
-        except: return None
+            if src_key == "qmap":
+                # 512px仕様に合わせて、1つ上のズームレベルのURLを取得する
+                req_z = z - 1
+                req_x = x // 2
+                req_y = y // 2
+                url = source["url"].format(z=req_z, x=req_x, y=req_y)
+            else:
+                url = source["url"].format(z=z, x=x, y=y)
+
+            try:
+                r = session.get(url, timeout=10)
+                if r.status_code != 200: return None
+
+                img = Image.open(BytesIO(r.content))
+                img.load()
+
+                if src_key == "qmap" and img.size == (512, 512):
+                    # 512pxの画像から、必要な256pxの区画をハサミで切り抜く
+                    quad_x = x % 2
+                    quad_y = y % 2
+                    img = img.crop((quad_x * 256, quad_y * 256, quad_x * 256 + 256, quad_y * 256 + 256))
+
+                # 修正: すべてのタイルをRGBA（透過度あり）として強制的に読み込むように統一
+                img_arr = np.array(img.convert("RGBA"))
+                
+                if src_key == "qmap": return decode_qmap_rgb(img_arr)
+                elif source["xy_order"] == "yx": return decode_gsj_png(img_arr)
+                else: return decode_gsi_png(img_arr)
+
+            except: return None
 
     def get_scaled_dem(src_key, target_bx, target_by, target_z):
             """改良版：マスクを使用した正規化バイリニア補間"""
@@ -238,9 +275,10 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_TIF = "OUTPUT_TIF"
 
     TILE_SOURCES = [
-        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2025/1_02/{z}/{x}/{y}.webp", "xy_order": "xy"},
-        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【地理院】", "zoom": 17, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2026/1_01/{z}/{x}/{y}.webp", "xy_order": "xy"},
+        {"key": "chiriin", "name": "基盤地図情報1ｍメッシュ【地理院】", "zoom": 17, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "miyagi", "name": "宮城県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/4_miyagi/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "yamagata", "name": "山形県（庄内森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_028_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "tochigi", "name": "2021〜2022年栃木県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/tochigi/{z}/{y}/{x}.png", "xy_order": "yx"},
         {"key": "tokyo", "name": "2022〜2023年度東京都0.25mメッシュ【産総研】", "zoom": 19, "url": "https://tiles.gsj.jp/tiles/elev/tokyo/{z}/{y}/{x}.png", "xy_order": "yx"},
         {"key": "kanagawa", "name": "2019〜2022年度神奈川県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/kanagawa/{z}/{y}/{x}.png", "xy_order": "yx"},
@@ -249,15 +287,24 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         {"key": "noto2020w", "name": "2020年度石川県能登西部0.5mメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_02_g/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "noto2022e", "name": "2022年度石川県能登東部0.5mメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_01_g/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "yamanashi", "name": "2024年山梨県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/19_yamanashi/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "nagano", "name": "長野県（伊那谷森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_067_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "shizuoka", "name": "静岡県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/shizuoka/{z}/{y}/{x}.png", "xy_order": "yx"},
-        {"key": "aichi", "name": "愛知県（尾張西三河森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_078_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
+        {"key": "aichi-Nishi", "name": "愛知県（尾張西三河森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_078_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
+        {"key": "aichi-Higashi", "name": "愛知県（東三河森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_079_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
+        {"key": "mie", "name": "三重県（北伊勢森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_081_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
         {"key": "shiga", "name": "滋賀県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/25_shiga/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "kyoto", "name": "2019〜2023年京都府0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/26_kyoto/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "hyogo", "name": "2021〜2022年度兵庫県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/hyogodem/{z}/{y}/{x}.png", "xy_order": "yx"},
         {"key": "tottori", "name": "2018〜2023年度鳥取県0.5mメッシュ【鳥取県】", "zoom": 18, "url": "https://rinya-tottori.geospatial.jp/tile/rinya/2024/gridPNG_tottori/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "okayama", "name": "岡山県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/33_okayama/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "H30gouu", "name": "平成30年７月豪雨（岡山県・広島県）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_h3007tr_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "tokushima-yoshino", "name": "徳島県（吉野川森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_116_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "tokushima-naka", "name": "徳島県（那賀・海部川森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_117_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "ehime", "name": "2019年愛媛県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/38_ehime/dem_2019/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "kouchi", "name": "2018年度高知県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/kochi/{z}/{y}/{x}.png", "xy_order": "yx"},
+        {"key": "kumamotojishin", "name": "平成28年熊本地震0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_h28eq_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "kumamotogouu", "name": "令和2年7月豪雨0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_r0207tr_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "oita", "name": "大分県（大分南部森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_143_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "fallback_dem5a", "zoom": 15, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "fallback_dem5b", "zoom": 15, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "fallback_dem5c", "zoom": 15, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem5c_png/{z}/{x}/{y}.png", "xy_order": "xy"},
@@ -271,10 +318,32 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
     def shortHelpString(self):
         # ウィンドウの右パネル（ヘルプ）に表示されるテキスト（HTML対応）
         return """
-        <h2>DEM取得の手順</h2>
-        <p>DEMの整備範囲を確認するには、<b><a href="https://maps.qchizu.xyz/">全国Q地図</a></b> を開き、「4.地形」レイヤを参照してください。</p>
-        <p>「愛知県（尾張西三河森林計画区）」の整備範囲は<b><a href="https://www.geospatial.jp/ckan/dataset/owarinishimikawa_078/resource/c27000f2-7a52-4a6d-93af-227fb4d23a01">こちら</a></b> をご確認ください。</p>
-        <p>範囲を選択する際は、このツールに戻り「Extraction extent」の右側の「...」ボタンから「キャンバス上で描画」などを選択してください。</p>
+        <div style="line-height: 0.5;">
+            <h2 style="margin-bottom: 10px;">DEM取得の手順</h2>
+
+            <p style="margin-top: 0; margin-bottom: 10px;">
+            範囲を選択する際は、このツールに戻り「Extraction extent」の右側の「...」ボタンから「キャンバス上で描画」などを選択してください。
+            </p>
+            
+            <p style="margin-top: 0; margin-bottom: 10px;">
+            DEMの整備範囲を確認するには、<b><a href="https://maps.qchizu.xyz/">全国Q地図</a></b> を開き、「4.地形」レイヤを参照してください。
+            </p>
+            
+            <p style="margin-top: 0; margin-bottom: 0;">
+            以下の整備範囲はそれぞれのリンクからご確認ください。
+            <b><a href="https://www.geospatial.jp/ckan/dataset/owarinishimikawa_078/resource/c27000f2-7a52-4a6d-93af-227fb4d23a01">「愛知県（尾張西三河森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/higashimikawa_079/resource/dcfc80b5-b77f-4117-8812-8d6a6bc728cf">「愛知県（東三河森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/h30_7_gouu/resource/370d2694-36f7-459b-9f12-7dba10d465a5">「平成30年７月豪雨（岡山県・広島県）」</a></b>
+            <b><a href="https://www.geospatial.jp/ckan/dataset/028_syounai/resource/89154c81-9727-4c3a-82e2-c6dacd24e99c">「山形県（庄内森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/h28_kumamoto_earthquake_aerial_laser/resource/64137ca3-d59d-44c5-abdf-f7333b7f5b2f">「平成28年熊本地震」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/r2_7_gouu/resource/180c9912-928b-4671-b5b4-d5fe74fff75e">「令和2年7月豪雨」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/inatani_067/resource/c19109e6-0196-42bc-a297-d5533df213a6">「長野県（伊那谷森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/kitaise_081/resource/8fb2b711-49d4-4096-a7cc-3998a090eb67">「三重県（北伊勢森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/yoshinokawa_116/resource/41e18476-5ab8-4f2e-a9d8-42b2a79f591b">「徳島県（吉野川森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/tokushima_aerial_laser/resource/3cf20bd8-8489-4a26-8579-aa590d2b1ee3">「徳島県（那賀・海部川森林計画区）」</a></b> 
+            <b><a href="https://www.geospatial.jp/ckan/dataset/oita_aerial_laser/resource/be4c6cb6-8b1d-405c-948f-6bf890594610">「大分県（大分南部森林計画区）」</a></b> 
+            </p>
+        </div>
         """
 
     def helpUrl(self):
