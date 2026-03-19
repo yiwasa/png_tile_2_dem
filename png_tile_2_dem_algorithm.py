@@ -479,9 +479,11 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             vrt_path = os.path.join(tmpdir, "mosaic.vrt")
             gdal.BuildVRT(vrt_path, temp_files)
 
+            # ★追加: 指定範囲に合わせて正確に切り取るための計算
             out_xform = QgsCoordinateTransform(context.project().crs(), output_crs, QgsProject.instance())
             out_rect = out_xform.transformBoundingBox(extent)
 
+            # ★追加: 出力CRSにおける自動計算された解像度を取得し、正方形(cellsize)に強制する
             vrt_ds = gdal.Open(vrt_path)
             tmp_warp = gdal.AutoCreateWarpedVRT(vrt_ds, None, output_crs.toWkt(), gdal.GRA_NearestNeighbour)
             gt = tmp_warp.GetGeoTransform()
@@ -494,13 +496,14 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
                 format="GTiff",
                 resampleAlg=gdal.GRA_Bilinear,
                 dstNodata=nodata,
+                # ★追加: 出力範囲をユーザー指定範囲(minX, minY, maxX, maxY)に固定
                 outputBounds=(out_rect.xMinimum(), out_rect.yMinimum(), out_rect.xMaximum(), out_rect.yMaximum()),
-                xRes=target_res, 
-                yRes=target_res,
+                xRes=target_res,           # ★追加: 強制的に正方形にする
+                yRes=target_res,           # ★追加: 強制的に正方形にする
+                targetAlignedPixels=True,  # ★追加: 元のグリッド境界に合わせて出力範囲を自動拡張（スナップ）する
                 creationOptions=["COMPRESS=DEFLATE", "TILED=YES"]
             )
             gdal.Warp(output_tif, vrt_path, options=warp_opts)
-
             # レイヤ追加
             layer = QgsRasterLayer(output_tif, os.path.basename(output_tif))
             QgsProject.instance().addMapLayer(layer)
