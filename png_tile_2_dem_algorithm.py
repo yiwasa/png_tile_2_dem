@@ -479,17 +479,24 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             vrt_path = os.path.join(tmpdir, "mosaic.vrt")
             gdal.BuildVRT(vrt_path, temp_files)
 
-            # ★追加: 指定範囲に合わせて正確に切り取るための計算
             out_xform = QgsCoordinateTransform(context.project().crs(), output_crs, QgsProject.instance())
             out_rect = out_xform.transformBoundingBox(extent)
+
+            vrt_ds = gdal.Open(vrt_path)
+            tmp_warp = gdal.AutoCreateWarpedVRT(vrt_ds, None, output_crs.toWkt(), gdal.GRA_NearestNeighbour)
+            gt = tmp_warp.GetGeoTransform()
+            target_res = (abs(gt[1]) + abs(gt[5])) / 2.0  # XとYの解像度を平均して完全に一致させる
+            vrt_ds = None
+            tmp_warp = None
 
             warp_opts = gdal.WarpOptions(
                 dstSRS=output_crs.authid(),
                 format="GTiff",
                 resampleAlg=gdal.GRA_Bilinear,
                 dstNodata=nodata,
-                # ★追加: 出力範囲をユーザー指定範囲(minX, minY, maxX, maxY)に固定
                 outputBounds=(out_rect.xMinimum(), out_rect.yMinimum(), out_rect.xMaximum(), out_rect.yMaximum()),
+                xRes=target_res, 
+                yRes=target_res,
                 creationOptions=["COMPRESS=DEFLATE", "TILED=YES"]
             )
             gdal.Warp(output_tif, vrt_path, options=warp_opts)
