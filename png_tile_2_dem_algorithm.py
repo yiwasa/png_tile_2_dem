@@ -149,8 +149,27 @@ def process_single_tile_composite(args):
                 r = session.get(url, timeout=10)
                 if r.status_code != 200: return None
 
-                img = Image.open(BytesIO(r.content))
-                img.load()
+                # ★修正: WebP非対応のWindows環境への対策（PyQtの機能でデコードする）
+                if url.endswith(".webp"):
+                    from qgis.PyQt.QtGui import QImage
+                    from qgis.PyQt.QtCore import QByteArray, QBuffer, QIODevice
+                    
+                    # Qtの機能を使ってWebPを読み込み
+                    qimg = QImage()
+                    qimg.loadFromData(r.content)
+                    if qimg.isNull(): return None
+                    
+                    # Pillowで扱えるようにメモリ上で一時的にPNGに変換
+                    ba = QByteArray()
+                    buffer = QBuffer(ba)
+                    buffer.open(QIODevice.WriteOnly)
+                    qimg.save(buffer, "PNG")
+                    
+                    img = Image.open(BytesIO(ba.data()))
+                    img.load()
+                else:
+                    img = Image.open(BytesIO(r.content))
+                    img.load()
 
                 if src_key == "qmap" and img.size == (512, 512):
                     # 512pxの画像から、必要な256pxの区画をハサミで切り抜く
