@@ -136,12 +136,14 @@ def process_single_tile_composite(args):
     def fetch_and_decode(src_key, x, y, z):
             source = next(s for s in active_sources if s["key"] == src_key)
             
-            if src_key == "qmap":
+            needs_quad_crop = False
+            if src_key in ["qmap", "nagano-ringyo", "nagano-sabou"]:
                 # 512px仕様に合わせて、1つ上のズームレベルのURLを取得する
                 req_z = z - 1
                 req_x = x // 2
                 req_y = y // 2
                 url = source["url"].format(z=req_z, x=req_x, y=req_y)
+                needs_quad_crop = True
             else:
                 url = source["url"].format(z=z, x=x, y=y)
 
@@ -171,11 +173,14 @@ def process_single_tile_composite(args):
                     img = Image.open(BytesIO(r.content))
                     img.load()
 
-                if src_key == "qmap" and img.size == (512, 512):
+                if needs_quad_crop and img.size == (512, 512):
                     # 512pxの画像から、必要な256pxの区画をハサミで切り抜く
                     quad_x = x % 2
                     quad_y = y % 2
                     img = img.crop((quad_x * 256, quad_y * 256, quad_x * 256 + 256, quad_y * 256 + 256))
+                elif img.size != (256, 256):
+                    # 万が一、その他のソースで想定外のサイズが来た場合の安全対策
+                    img = img.resize((256, 256), Image.BILINEAR)
 
                 # 修正: すべてのタイルをRGBA（透過度あり）として強制的に読み込むように統一
                 img_arr = np.array(img.convert("RGBA"))
@@ -306,6 +311,8 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         {"key": "noto2020w", "name": "2020年度石川県能登西部0.5mメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_02_g/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "noto2022e", "name": "2022年度石川県能登東部0.5mメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/94dem/17p/ishikawa_f_01_g/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "yamanashi", "name": "2024年山梨県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/19_yamanashi/dem_2024/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "nagano-ringyo", "name": "長野県（林業総合センター）0.5mメッシュ【産総研】", "zoom": 18, "url": "https://gbank.gsj.jp/seamless/elev2/nagano/{z}/{x}/{y}.webp", "xy_order": "xy"},
+        {"key": "nagano-sabou", "name": "長野県（建設部砂防課）0.5mメッシュ【産総研】", "zoom": 18, "url": "https://gbank.gsj.jp/seamless/elev2/nagano2/{z}/{x}/{y}.webp", "xy_order": "xy"},
         {"key": "nagano", "name": "長野県（伊那谷森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_067_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "shizuoka", "name": "静岡県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/shizuoka/{z}/{y}/{x}.png", "xy_order": "yx"},
         {"key": "aichi-Nishi", "name": "愛知県（尾張西三河森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_078_2025/{z}/{x}/{y}.png", "xy_order": "xy"}, 
@@ -346,21 +353,6 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             
             <p style="margin-top: 0; margin-bottom: 10px;">
             DEMの整備範囲を確認するには、<b><a href="https://maps.qchizu.xyz/">全国Q地図</a></b> を開き、「4.地形」レイヤを参照してください。
-            </p>
-            
-            <p style="margin-top: 0; margin-bottom: 0;">
-            以下の整備範囲はそれぞれのリンクからご確認ください。
-            <b><a href="https://www.geospatial.jp/ckan/dataset/owarinishimikawa_078/resource/c27000f2-7a52-4a6d-93af-227fb4d23a01">「愛知県（尾張西三河森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/higashimikawa_079/resource/dcfc80b5-b77f-4117-8812-8d6a6bc728cf">「愛知県（東三河森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/h30_7_gouu/resource/370d2694-36f7-459b-9f12-7dba10d465a5">「平成30年７月豪雨（岡山県・広島県）」</a></b>
-            <b><a href="https://www.geospatial.jp/ckan/dataset/028_syounai/resource/89154c81-9727-4c3a-82e2-c6dacd24e99c">「山形県（庄内森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/h28_kumamoto_earthquake_aerial_laser/resource/64137ca3-d59d-44c5-abdf-f7333b7f5b2f">「平成28年熊本地震」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/r2_7_gouu/resource/180c9912-928b-4671-b5b4-d5fe74fff75e">「令和2年7月豪雨」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/inatani_067/resource/c19109e6-0196-42bc-a297-d5533df213a6">「長野県（伊那谷森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/kitaise_081/resource/8fb2b711-49d4-4096-a7cc-3998a090eb67">「三重県（北伊勢森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/yoshinokawa_116/resource/41e18476-5ab8-4f2e-a9d8-42b2a79f591b">「徳島県（吉野川森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/tokushima_aerial_laser/resource/3cf20bd8-8489-4a26-8579-aa590d2b1ee3">「徳島県（那賀・海部川森林計画区）」</a></b> 
-            <b><a href="https://www.geospatial.jp/ckan/dataset/oita_aerial_laser/resource/be4c6cb6-8b1d-405c-948f-6bf890594610">「大分県（大分南部森林計画区）」</a></b> 
             </p>
         </div>
         """
