@@ -11,10 +11,8 @@ import tempfile
 import shutil
 import requests
 import numpy as np
-from PIL import Image
-from io import BytesIO
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+from qgis.PyQt.QtGui import QImage
+from qgis.PyQt.QtCore import Qt
 
 from qgis.core import (
     QgsProcessing,
@@ -69,6 +67,32 @@ def tile_bounds_mercator(x, y, z):
 # ==============================================================================
 # デコード処理
 # ==============================================================================
+
+def resize_array_bilinear(arr, new_size):
+    """Pillowの代わりに使用するNumpyベースのバイリニアリサイズ関数"""
+    new_h, new_w = new_size
+    h, w = arr.shape
+    if (h, w) == (new_h, new_w): return arr.copy()
+    
+    x = np.linspace(0, w - 1, new_w)
+    y = np.linspace(0, h - 1, new_h)
+    x_idx = np.clip(np.floor(x).astype(int), 0, w - 2)
+    y_idx = np.clip(np.floor(y).astype(int), 0, h - 2)
+    
+    xw = x - x_idx
+    yw = y - y_idx
+    
+    c00 = arr[y_idx[:, None], x_idx]
+    c01 = arr[y_idx[:, None], x_idx + 1]
+    c10 = arr[y_idx[:, None] + 1, x_idx]
+    c11 = arr[y_idx[:, None] + 1, x_idx + 1]
+    
+    w00 = (1 - yw[:, None]) * (1 - xw)
+    w01 = (1 - yw[:, None]) * xw
+    w10 = yw[:, None] * (1 - xw)
+    w11 = yw[:, None] * xw
+    
+    return (c00 * w00 + c01 * w01 + c10 * w10 + c11 * w11).astype(np.float32)
 
 def decode_gsi_png(img_arr):
     """国土地理院形式のデコード"""
@@ -151,39 +175,25 @@ def process_single_tile_composite(args):
                 r = session.get(url, timeout=10)
                 if r.status_code != 200: return None
 
-                # ★修正: WebP非対応のWindows環境への対策（PyQtの機能でデコードする）
-                if url.endswith(".webp"):
-                    from qgis.PyQt.QtGui import QImage
-                    from qgis.PyQt.QtCore import QByteArray, QBuffer, QIODevice
-                    
-                    # Qtの機能を使ってWebPを読み込み
-                    qimg = QImage()
-                    qimg.loadFromData(r.content)
-                    if qimg.isNull(): return None
-                    
-                    # Pillowで扱えるようにメモリ上で一時的にPNGに変換
-                    ba = QByteArray()
-                    buffer = QBuffer(ba)
-                    buffer.open(QIODevice.WriteOnly)
-                    qimg.save(buffer, "PNG")
-                    
-                    img = Image.open(BytesIO(ba.data()))
-                    img.load()
-                else:
-                    img = Image.open(BytesIO(r.content))
-                    img.load()
+                # 修正: Pillowを完全に排除し、QImage(PyQt)のみで処理
+                qimg = QImage()
+                qimg.loadFromData(r.content)
+                if qimg.isNull(): return None
 
-                if needs_quad_crop and img.size == (512, 512):
-                    # 512pxの画像から、必要な256pxの区画をハサミで切り抜く
+                # 画像の切り抜き・リサイズ
+                if needs_quad_crop and qimg.width() == 512 and qimg.height() == 512:
                     quad_x = x % 2
                     quad_y = y % 2
-                    img = img.crop((quad_x * 256, quad_y * 256, quad_x * 256 + 256, quad_y * 256 + 256))
-                elif img.size != (256, 256):
-                    # 万が一、その他のソースで想定外のサイズが来た場合の安全対策
-                    img = img.resize((256, 256), Image.BILINEAR)
+                    qimg = qimg.copy(quad_x * 256, quad_y * 256, 256, 256)
+                elif qimg.width() != 256 or qimg.height() != 256:
+                    qimg = qimg.scaled(256, 256, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
-                # 修正: すべてのタイルをRGBA（透過度あり）として強制的に読み込むように統一
-                img_arr = np.array(img.convert("RGBA"))
+                # QImageをNumpy配列(RGBA)に直接変換
+                qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+                width, height = qimg.width(), qimg.height()
+                ptr = qimg.constBits()
+                ptr.setsize(height * width * 4)
+                img_arr = np.array(ptr).reshape(height, width, 4)
                 
                 if src_key == "qmap": return decode_qmap_rgb(img_arr)
                 elif source["xy_order"] == "yx": return decode_gsj_png(img_arr)
@@ -216,9 +226,9 @@ def process_single_tile_composite(args):
                             mask = (~np.isnan(sub_dem)).astype(np.float32)
                             data_only = np.nan_to_num(sub_dem, nan=0.0)
                             
-                            # 標高とマスクの両方をバイリニアでリサイズ
-                            res_val = np.array(Image.fromarray(data_only, mode="F").resize((sub_tile_res, sub_tile_res), Image.BILINEAR))
-                            res_mask = np.array(Image.fromarray(mask, mode="F").resize((sub_tile_res, sub_tile_res), Image.BILINEAR))
+                            # Pillowを使わずにNumpyでリサイズ
+                            res_val = resize_array_bilinear(data_only, (sub_tile_res, sub_tile_res))
+                            res_mask = resize_array_bilinear(mask, (sub_tile_res, sub_tile_res))
                             
                             # マスクで割ることで境界の値を補正（0除算回避）
                             with np.errstate(divide='ignore', invalid='ignore'):
@@ -239,9 +249,9 @@ def process_single_tile_composite(args):
                 mask = (~np.isnan(parent_dem)).astype(np.float32)
                 data_only = np.nan_to_num(parent_dem, nan=0.0)
                 
-                # 拡大リサイズ
-                big_val = np.array(Image.fromarray(data_only, mode="F").resize((tile_size * scale, tile_size * scale), Image.BILINEAR))
-                big_mask = np.array(Image.fromarray(mask, mode="F").resize((tile_size * scale, tile_size * scale), Image.BILINEAR))
+                # 拡大リサイズ(Pillowを使わずにNumpyで)
+                big_val = resize_array_bilinear(data_only, (tile_size * scale, tile_size * scale))
+                big_mask = resize_array_bilinear(mask, (tile_size * scale, tile_size * scale))
                 
                 with np.errstate(divide='ignore', invalid='ignore'):
                     big_dem = np.where(big_mask > 0.01, big_val / big_mask, np.nan)
@@ -299,7 +309,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_TIF = "OUTPUT_TIF"
 
     TILE_SOURCES = [
-        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://mapdata.qchizu.xyz/03_dem/52_gsi/all_2026/1_01/{z}/{x}/{y}.webp", "xy_order": "xy"},
+        {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://qchizu3.xsrv.jp/mapdata/d52001/{z}/{x}/{y}.webp", "xy_order": "xy"},
         {"key": "chiriin", "name": "基盤地図情報1ｍメッシュ【地理院】", "zoom": 17, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "miyagi", "name": "宮城県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/4_miyagi/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "yamagata", "name": "山形県（庄内森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_028_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
@@ -428,7 +438,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
 
         # 範囲変換
         epsg4326 = QgsCoordinateReferenceSystem("EPSG:4326")
-        xform = QgsCoordinateTransform(context.project().crs(), epsg4326, QgsProject.instance())
+        xform = QgsCoordinateTransform(context.project().crs(), epsg4326, context.transformContext())
         p_min = xform.transform(extent.xMinimum(), extent.yMinimum())
         p_max = xform.transform(extent.xMaximum(), extent.yMaximum())
 
@@ -491,7 +501,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             gdal.BuildVRT(vrt_path, temp_files)
 
             # ★追加: 指定範囲に合わせて正確に切り取るための計算
-            out_xform = QgsCoordinateTransform(context.project().crs(), output_crs, QgsProject.instance())
+            out_xform = QgsCoordinateTransform(context.project().crs(), output_crs, context.transformContext())
             out_rect = out_xform.transformBoundingBox(extent)
 
             # ★追加: 出力CRSにおける自動計算された解像度を取得し、正方形(cellsize)に強制する
@@ -515,9 +525,8 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
                 creationOptions=["COMPRESS=DEFLATE", "TILED=YES"]
             )
             gdal.Warp(output_tif, vrt_path, options=warp_opts)
-            # レイヤ追加
-            layer = QgsRasterLayer(output_tif, os.path.basename(output_tif))
-            QgsProject.instance().addMapLayer(layer)
+            
+            # レイヤの追加はProcessingフレームワークに自動で任せる（QGIS 4.0クラッシュ対策）
 
             return {self.OUTPUT_TIF: output_tif}
 
