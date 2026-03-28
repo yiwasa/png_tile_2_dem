@@ -10,6 +10,7 @@ import math
 import tempfile
 import shutil
 import requests
+import time
 import numpy as np
 from qgis.PyQt.QtGui import QImage
 from qgis.PyQt.QtCore import Qt
@@ -34,6 +35,9 @@ gdal.UseExceptions()
 
 from threading import Lock
 progress_lock = Lock()
+request_lock = Lock()
+tile_cache = {}          # ★追加: ダウンロード済み画像の共有キャッシュ
+tile_cache_lock = Lock() # ★追加: キャッシュ操作用のロック
 
 # ==============================================================================
 # ヘルパー関数
@@ -171,35 +175,85 @@ def process_single_tile_composite(args):
             else:
                 url = source["url"].format(z=z, x=x, y=y)
 
-            try:
-                r = session.get(url, timeout=10)
-                if r.status_code != 200: return None
+            # ★ここから修正: 4つのスレッドが同じURLに重複アクセスするのを防ぐ
+            global tile_cache, tile_cache_lock
+            
+            while True:
+                with tile_cache_lock:
+                    cached_content = tile_cache.get(url)
+                    if cached_content is None:
+                        tile_cache[url] = "downloading"
+                        break
+                if cached_content != "downloading":
+                    break
+                time.sleep(0.05)
 
-                # 修正: Pillowを完全に排除し、QImage(PyQt)のみで処理
-                qimg = QImage()
-                qimg.loadFromData(r.content)
-                if qimg.isNull(): return None
-
-                # 画像の切り抜き・リサイズ
-                if needs_quad_crop and qimg.width() == 512 and qimg.height() == 512:
-                    quad_x = x % 2
-                    quad_y = y % 2
-                    qimg = qimg.copy(quad_x * 256, quad_y * 256, 256, 256)
-                elif qimg.width() != 256 or qimg.height() != 256:
-                    qimg = qimg.scaled(256, 256, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-
-                # QImageをNumpy配列(RGBA)に直接変換
-                qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
-                width, height = qimg.width(), qimg.height()
-                ptr = qimg.constBits()
-                ptr.setsize(height * width * 4)
-                img_arr = np.array(ptr).reshape(height, width, 4)
+            if cached_content and cached_content != "downloading":
+                content = cached_content
+            else:
+                is_strict = src_key in ["qmap", "chiriin", "sansouken"] or src_key.startswith("fallback_")
+                max_retries = 5 if is_strict else 1
+                content = None
                 
-                if src_key == "qmap": return decode_qmap_rgb(img_arr)
-                elif source["xy_order"] == "yx": return decode_gsj_png(img_arr)
-                else: return decode_gsi_png(img_arr)
+                for attempt in range(max_retries):
+                    try:
+                        if is_strict:
+                            global request_lock
+                            with request_lock:
+                                time.sleep(0.1)
+                        r = session.get(url, timeout=15)
+                        
+                        if r.status_code == 429 or r.status_code >= 500:
+                            if is_strict:
+                                time.sleep(2.0 + attempt * 2.0)
+                                continue
+                            else:
+                                break
+                        elif r.status_code != 200:
+                            break
+                            
+                        content = r.content
+                        break
+                        
+                    except Exception:
+                        if is_strict:
+                            time.sleep(2.0 + attempt * 2.0)
+                            continue
+                        else:
+                            break
+                            
+                with tile_cache_lock:
+                    if content:
+                        tile_cache[url] = content
+                    elif url in tile_cache:
+                        del tile_cache[url]
+                        
+                if not content:
+                    return None
 
-            except: return None
+            # 修正: Pillowを完全に排除し、QImage(PyQt)のみで処理
+            qimg = QImage()
+            qimg.loadFromData(content)  # r.content から content に変更
+            if qimg.isNull(): return None
+
+            # 画像の切り抜き・リサイズ
+            if needs_quad_crop and qimg.width() == 512 and qimg.height() == 512:
+                quad_x = x % 2
+                quad_y = y % 2
+                qimg = qimg.copy(quad_x * 256, quad_y * 256, 256, 256)
+            elif qimg.width() != 256 or qimg.height() != 256:
+                qimg = qimg.scaled(256, 256, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+            # QImageをNumpy配列(RGBA)に直接変換
+            qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+            width, height = qimg.width(), qimg.height()
+            ptr = qimg.constBits()
+            ptr.setsize(height * width * 4)
+            img_arr = np.array(ptr).reshape(height, width, 4)
+            
+            if src_key == "qmap": return decode_qmap_rgb(img_arr)
+            elif source["xy_order"] == "yx": return decode_gsj_png(img_arr)
+            else: return decode_gsi_png(img_arr)
 
     def get_scaled_dem(src_key, target_bx, target_by, target_z):
             """改良版：マスクを使用した正規化バイリニア補間"""
@@ -271,6 +325,9 @@ def process_single_tile_composite(args):
             mask = np.isnan(composite_dem)
             composite_dem[mask] = res[mask]
             
+    # ★追加: フォールバック（5m等）で穴埋めされる「前」に、高解像度データが全く取れなかったかを判定
+    high_res_missing = bool(np.isnan(composite_dem).all())
+
     # 3. フォールバック
     fallbacks = ["fallback_dem5a", "fallback_dem5b", "fallback_dem5c", "fallback_dem10b"]
     for fb in fallbacks:
@@ -294,9 +351,10 @@ def process_single_tile_composite(args):
         ds.GetRasterBand(1).WriteArray(h_filled)
         ds.GetRasterBand(1).SetNoDataValue(nodata)
         ds = None
-        return out_path, True
+        # ★修正: 高解像度データの欠損フラグ(high_res_missing)も一緒に返す
+        return out_path, True, high_res_missing
     except:
-        return None, False
+        return None, False, True
 
 # ==============================================================================
 # QGIS アルゴリズム クラス
@@ -311,6 +369,7 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
     TILE_SOURCES = [
         {"key": "qmap", "name": "基盤地図情報1ｍメッシュ【Q地図】", "zoom": 17, "url": "https://qchizu3.xsrv.jp/mapdata/d52001/{z}/{x}/{y}.webp", "xy_order": "xy"},
         {"key": "chiriin", "name": "基盤地図情報1ｍメッシュ【地理院】", "zoom": 17, "url": "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png", "xy_order": "xy"},
+        {"key": "sansouken", "name": "基盤地図情報1ｍメッシュ【産総研】", "zoom": 17, "url": "https://gbank.gsj.jp/seamless/elev2/gsidem1a/{z}/{x}/{y}.webp", "xy_order": "xy"},
         {"key": "miyagi", "name": "宮城県0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://forestgeo.info/opendata/4_miyagi/dem_2023/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "yamagata", "name": "山形県（庄内森林計画区）0.5mメッシュ【林野庁】", "zoom": 18, "url": "https://rinya-tiles.geospatial.jp/dem_028_2025/{z}/{x}/{y}.png", "xy_order": "xy"},
         {"key": "tochigi", "name": "2021〜2022年栃木県0.5mメッシュ【産総研】", "zoom": 18, "url": "https://tiles.gsj.jp/tiles/elev/tochigi/{z}/{y}/{x}.png", "xy_order": "yx"},
@@ -427,6 +486,9 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         return super().checkParameterValues(parameters, context)
 
     def processAlgorithm(self, parameters, context, feedback):
+        global tile_cache, tile_cache_lock
+        with tile_cache_lock:
+            tile_cache.clear()
         extent = self.parameterAsExtent(parameters, self.INPUT_EXTENT, context)
         primary_idx = self.parameterAsEnum(parameters, self.PRIMARY_DEM, context)
         output_tif = self.parameterAsOutputLayer(parameters, self.OUTPUT_TIF, context)
@@ -483,17 +545,25 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
             max_workers = min(16, (os.cpu_count() or 4) * 2)
             temp_files = []
             completed = 0
+            missing_highres_count = 0  # ★追加: 高解像度データが取れなかったタイルの数をカウント
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(process_single_tile_composite, t) for t in tasks]
                 for future in as_completed(futures):
                     if feedback.isCanceled(): break
-                    out, success = future.result()
+                    # ★修正: high_res_missing も受け取るように変更
+                    out, success, high_res_missing = future.result()
                     if success: temp_files.append(out)
+                    if high_res_missing: missing_highres_count += 1  # ★追加: 欠損があればカウントアップ
+                    
                     completed += 1
                     feedback.setProgress(int(completed / n_tiles * 80))
 
             if not temp_files: raise QgsProcessingException("No tiles were downloaded.")
+
+            # ★追加: 高解像度データが取得できなかったタイルがある場合、QGISのログにお知らせを出す
+            if missing_highres_count > 0:
+                feedback.reportError(f"【お知らせ】{missing_highres_count}個の区画で指定の高解像度DEM（1m等）が取得できず、5mDEM等の粗いデータで補完されたか、データなしとなりました。サーバーへのアクセス集中や提供範囲外の可能性があります。", fatalError=False)
 
             # VRT作成 & Warp
             feedback.pushInfo("Mosaicking and Reprojecting...")
