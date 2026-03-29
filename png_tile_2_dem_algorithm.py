@@ -200,7 +200,7 @@ def process_single_tile_composite(args):
                         if is_strict:
                             global request_lock
                             with request_lock:
-                                time.sleep(0.1)
+                                time.sleep(0.2)
                         r = session.get(url, timeout=15)
                         
                         if r.status_code == 429 or r.status_code >= 500:
