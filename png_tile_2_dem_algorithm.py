@@ -437,7 +437,42 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         display_names = [s["name"] for s in self.TILE_SOURCES if not s["key"].startswith("fallback_")]
         self.addParameter(QgsProcessingParameterEnum(self.PRIMARY_DEM, "Primary DEM source", options=display_names, defaultValue=0))
         
-        self.addParameter(QgsProcessingParameterCrs(self.OUTPUT_CRS, "Output CRS", defaultValue="EPSG:4326"))
+        # 画面の中心座標から一番近い平面直角座標系(JGD2011)のEPSGコードを算出する処理
+        default_crs = "EPSG:4326"
+        try:
+            from qgis.utils import iface
+            if iface is not None and iface.mapCanvas() is not None:
+                canvas = iface.mapCanvas()
+                center = canvas.extent().center()
+                canvas_crs = canvas.mapSettings().destinationCrs()
+                epsg4326 = QgsCoordinateReferenceSystem("EPSG:4326")
+                transform = QgsCoordinateTransform(canvas_crs, epsg4326, QgsProject.instance())
+                center_4326 = transform.transform(center)
+                
+                lon, lat = center_4326.x(), center_4326.y()
+                
+                # 1系〜19系の原点座標(経度, 緯度)
+                origins = {
+                    1: (129.5, 33.0), 2: (131.0, 33.0), 3: (132.166667, 36.0),
+                    4: (133.5, 33.0), 5: (134.333333, 36.0), 6: (136.0, 36.0),
+                    7: (137.166667, 36.0), 8: (138.5, 36.0), 9: (139.833333, 36.0),
+                    10: (140.833333, 40.0), 11: (140.25, 44.0), 12: (142.25, 44.0),
+                    13: (144.25, 44.0), 14: (142.0, 26.0), 15: (127.5, 26.0),
+                    16: (124.0, 26.0), 17: (131.0, 26.0), 18: (136.0, 20.0),
+                    19: (154.0, 26.0)
+                }
+                best_system = 9
+                min_dist = float('inf')
+                for sys, (o_lon, o_lat) in origins.items():
+                    dist = (lon - o_lon)**2 + (lat - o_lat)**2
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_system = sys
+                default_crs = f"EPSG:{6668 + best_system}"
+        except Exception:
+            pass
+            
+        self.addParameter(QgsProcessingParameterCrs(self.OUTPUT_CRS, "Output CRS", defaultValue=default_crs))
         self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT_TIF, "Output GeoTIFF"))
 
     def checkParameterValues(self, parameters, context):
