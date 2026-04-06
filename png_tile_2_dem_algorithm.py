@@ -437,7 +437,6 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
         display_names = [s["name"] for s in self.TILE_SOURCES if not s["key"].startswith("fallback_")]
         self.addParameter(QgsProcessingParameterEnum(self.PRIMARY_DEM, "Primary DEM source", options=display_names, defaultValue=0))
         
-        # 画面の中心座標から一番近い平面直角座標系(JGD2011)のEPSGコードを算出する処理
         default_crs = "EPSG:4326"
         try:
             from qgis.utils import iface
@@ -451,24 +450,59 @@ class PngTile2DemAlgorithm(QgsProcessingAlgorithm):
                 
                 lon, lat = center_4326.x(), center_4326.y()
                 
-                # 1系〜19系の原点座標(経度, 緯度)
-                origins = {
-                    1: (129.5, 33.0), 2: (131.0, 33.0), 3: (132.166667, 36.0),
-                    4: (133.5, 33.0), 5: (134.333333, 36.0), 6: (136.0, 36.0),
-                    7: (137.166667, 36.0), 8: (138.5, 36.0), 9: (139.833333, 36.0),
-                    10: (140.833333, 40.0), 11: (140.25, 44.0), 12: (142.25, 44.0),
-                    13: (144.25, 44.0), 14: (142.0, 26.0), 15: (127.5, 26.0),
-                    16: (124.0, 26.0), 17: (131.0, 26.0), 18: (136.0, 20.0),
-                    19: (154.0, 26.0)
-                }
-                best_system = 9
-                min_dist = float('inf')
-                for sys, (o_lon, o_lat) in origins.items():
-                    dist = (lon - o_lon)**2 + (lat - o_lat)**2
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_system = sys
-                default_crs = f"EPSG:{6668 + best_system}"
+                import requests
+                # 国土地理院APIで都道府県コードと市町村コードを取得 (通信エラー時はスキップ)
+                try:
+                    res = requests.get(f"https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat={lat}&lon={lon}", timeout=1.5)
+                    muni_cd = res.json().get("results", {}).get("muniCd", "")
+                    pref = muni_cd[:2]
+                except Exception:
+                    pref = ""
+                    muni_cd = ""
+                
+                if pref:
+                    if pref == "01": # 北海道 (市町村コードの番号帯で厳密に分割)
+                        try:
+                            m = int(muni_cd[2:])
+                            if m in (202, 203, 236) or (331 <= m <= 347) or (361 <= m <= 371) or (391 <= m <= 409) or (427 <= m <= 429) or (432 <= m <= 438) or m == 465:
+                                sys = 11
+                            elif m in (206, 207, 208, 211, 219, 223) or (543 <= m <= 565) or (631 <= m <= 668) or (691 <= m <= 700):
+                                sys = 13
+                            else:
+                                sys = 12
+                        except ValueError:
+                            # 万が一市町村コードの解析に失敗した時の保険
+                            sys = 11 if lon < 141.0 else (12 if lon < 143.0 else 13)
+                    elif pref in ["02", "03", "04", "05", "06"]: sys = 10
+                    elif pref in ["07", "08", "09", "10", "11", "12", "14"]: sys = 9
+                    elif pref == "13": # 東京都
+                        if lat < 28.0:
+                            if lon < 140.5: sys = 18     # 東経140度30分から西
+                            elif lon > 143.0: sys = 19   # 東経143度から東
+                            else: sys = 14               # 東経140度30分〜143度の間
+                        else: sys = 9
+                    elif pref in ["15", "19", "20", "22"]: sys = 8
+                    elif pref in ["16", "17", "21", "23"]: sys = 7
+                    elif pref in ["18", "24", "25", "26", "27", "29", "30"]: sys = 6
+                    elif pref in ["28", "31", "33"]: sys = 5
+                    elif pref in ["36", "37", "38", "39"]: sys = 4
+                    elif pref in ["32", "34", "35"]: sys = 3
+                    elif pref in ["40", "41", "43", "44", "45"]: sys = 2
+                    elif pref == "42": # 長崎県 (全域が1系)
+                        sys = 1
+                    elif pref == "46": # 鹿児島県
+                        # 奄美群島(東経130度13分 = 130.2166...度)を含む
+                        if 27.0 <= lat <= 32.0 and 128.3 <= lon <= 130.21666666666667:
+                            sys = 1
+                        else:
+                            sys = 2 # 鹿児島県本土や種子島・屋久島などは2系
+                    elif pref == "47": # 沖縄県
+                        if lon < 126.0: sys = 16         # 東経126度から西
+                        elif lon > 130.0: sys = 17       # 東経130度から東
+                        else: sys = 15                   # 東経126度〜130度の間
+                        
+                    default_crs = f"EPSG:{6668 + sys}"
+                # 通信失敗時や都道府県が特定できない場合（海の上など）は初期設定のまま(EPSG:4326)になる
         except Exception:
             pass
             
