@@ -242,13 +242,27 @@ def process_single_tile_composite(args):
                 quad_y = y % 2
                 qimg = qimg.copy(quad_x * 256, quad_y * 256, 256, 256)
             elif qimg.width() != 256 or qimg.height() != 256:
-                qimg = qimg.scaled(256, 256, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                try:
+                    # QGIS 4.0 (PyQt6) 用
+                    qimg = qimg.scaled(256, 256, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                except AttributeError:
+                    # QGIS 3.x (PyQt5) 用
+                    qimg = qimg.scaled(256, 256, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
             # QImageをNumpy配列(RGBA)に直接変換
-            qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+            try:
+                # QGIS 4.0 (PyQt6) 用
+                qimg = qimg.convertToFormat(QImage.Format.Format_RGBA8888)
+            except AttributeError:
+                # QGIS 3.x (PyQt5) 用
+                qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+
             width, height = qimg.width(), qimg.height()
             ptr = qimg.constBits()
-            ptr.setsize(height * width * 4)
+            try:
+                ptr.setsize(height * width * 4)
+            except AttributeError:
+                pass # QGIS 4.0 (PyQt6) では不要なためスキップ
             img_arr = np.array(ptr).reshape(height, width, 4)
             
             if src_key == "qmap": return decode_qmap_rgb(img_arr)
